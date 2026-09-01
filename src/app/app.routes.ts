@@ -32,5 +32,10 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/cart-page').then((m) => m.CartPage),
     title: 'Carrito · Despiece de repuestos',
   },
+  {
+    path: 'admin',
+    loadComponent: () => import('./pages/admin-page').then((m) => m.AdminPage),
+    title: 'Administración · Despiece de repuestos',
+  },
   { path: '**', redirectTo: '' },
 ];

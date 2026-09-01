@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 
 import { Supabase } from './supabase';
+import { isEmptyOverride, mergeOverride, type FieldSpec } from './overrides';
 import type { Env } from './env';
 
 /** Access puts the authenticated identity in this header once it fronts the app. */
@@ -19,6 +20,17 @@ function db(env: Env): Supabase {
 
 /** PostgREST filters travel in the query string, so values must be escaped. */
 const eq = (value: string) => `eq.${encodeURIComponent(value)}`;
+
+/**
+ * Escapes a term for a PostgREST `ilike` inside an `or=(...)` logic tree.
+ *
+ * Commas and parentheses are the tree's own syntax, so an unescaped one both
+ * breaks the query and lets a caller reshape the filter. Doubling the quotes
+ * and wrapping the value keeps it a literal.
+ */
+function likeLiteral(term: string): string {
+  return `"*${term.replace(/["\\]/g, '\\$&')}*"`;
+}
 
 export const routes = new Hono<{ Bindings: Env }>().basePath('/api');
 
@@ -39,124 +51,161 @@ routes.get('/families', async (c) =>
   c.json(await db(c.env).select('family', 'select=id,name&order=sort_order,name')),
 );
 
+interface PageQuery {
+  readonly filters: string;
+  readonly limit: number;
+  readonly offset: number;
+}
+
 /**
- * Paged model list.
- *
  * `order` is not cosmetic: PostgREST gives no stable ordering without it, so
  * limit/offset paging silently repeats and drops rows.
  */
-routes.get('/models', async (c) => {
-  const { search = '', family = '', limit = '50', offset = '0' } = c.req.query();
-  const filters = [`select=*`, `order=name`, `limit=${Number(limit) || 50}`, `offset=${Number(offset) || 0}`];
-  if (search) {
-    filters.push(`or=(name.ilike.*${encodeURIComponent(search)}*,ref.ilike.*${encodeURIComponent(search)}*)`);
+function pageQuery(
+  raw: Record<string, string>,
+  orderBy: string,
+  searchColumns: readonly string[],
+): PageQuery {
+  const limit = Math.min(Math.max(Number(raw['limit']) || 50, 1), 200);
+  const offset = Math.max(Number(raw['offset']) || 0, 0);
+  const filters = [`select=*`, `order=${orderBy}`, `limit=${limit}`, `offset=${offset}`];
+  if (raw['search']) {
+    const literal = likeLiteral(raw['search']);
+    filters.push(`or=(${searchColumns.map((column) => `${column}.ilike.${literal}`).join(',')})`);
   }
-  if (family) {
-    filters.push(`family=${eq(family)}`);
+  if (raw['family']) {
+    filters.push(`family=${eq(raw['family'])}`);
   }
-  return c.json(await db(c.env).select('v_model', filters.join('&')));
-});
-
-routes.get('/parts', async (c) => {
-  const { search = '', family = '', limit = '50', offset = '0' } = c.req.query();
-  const filters = [`select=*`, `order=code`, `limit=${Number(limit) || 50}`, `offset=${Number(offset) || 0}`];
-  if (search) {
-    const term = encodeURIComponent(search);
-    filters.push(`or=(code.ilike.*${term}*,description.ilike.*${term}*,cmmf.ilike.*${term}*)`);
-  }
-  if (family) {
-    filters.push(`family=${eq(family)}`);
-  }
-  return c.json(await db(c.env).select('v_part', filters.join('&')));
-});
-
-interface FamilyRow {
-  readonly id: number;
-  readonly name: string;
+  return { filters: filters.join('&'), limit, offset };
 }
 
-async function familyIdOf(supabase: Supabase, name: string | undefined): Promise<number | null> {
-  if (!name) {
+/** Rows plus the grand total, so the UI can page instead of pretending 100 is all. */
+async function page(supabase: Supabase, relation: string, query: PageQuery) {
+  const [rows, total] = await Promise.all([
+    supabase.select(relation, query.filters),
+    supabase.count(relation, query.filters.replace(/&?(limit|offset)=\d+/g, '')),
+  ]);
+  return { rows, total, limit: query.limit, offset: query.offset };
+}
+
+routes.get('/models', async (c) =>
+  c.json(await page(db(c.env), 'v_model', pageQuery(c.req.query(), 'name', ['name', 'ref']))),
+);
+
+routes.get('/parts', async (c) =>
+  c.json(
+    await page(db(c.env), 'v_part', pageQuery(c.req.query(), 'code', ['code', 'description', 'cmmf'])),
+  ),
+);
+
+async function familyIdOf(supabase: Supabase, name: unknown): Promise<number | null> {
+  if (name === null || name === undefined || name === '') {
     return null;
   }
-  const [row] = await supabase.select<FamilyRow>('family', `select=id&name=${eq(name)}`);
+  const [row] = await supabase.select<{ id: number }>('family', `select=id&name=${eq(String(name))}`);
   if (!row) {
-    throw new Error(`familia desconocida: ${name}`);
+    throw new Error(`familia desconocida: ${String(name)}`);
   }
   return row.id;
 }
 
-/**
- * Edits a model's title and/or category.
- *
- * The pipeline's current values are snapshotted into `base_*` on every save.
- * That is what lets v_drift tell "the pipeline moved since you decided" apart
- * from "you and the pipeline agree" — and re-saving is therefore also how a
- * reviewed drift clears itself.
- */
-routes.patch('/models/:id', async (c) => {
-  const supabase = db(c.env);
-  const id = c.req.param('id');
-  const body = await c.req.json<{ name?: string; family?: string }>();
+const MODEL_FIELDS: Record<string, FieldSpec> = {
+  name: { column: 'name', baseColumn: 'base_name', sourceColumn: 'name' },
+  family: { column: 'family_id', baseColumn: 'base_family_id', sourceColumn: 'family_id' },
+};
 
-  const [base] = await supabase.select<{ name: string; family_id: number | null }>(
-    'model',
-    `select=name,family_id&id=${eq(id)}`,
+const PART_FIELDS: Record<string, FieldSpec> = {
+  description: { column: 'description', baseColumn: 'base_description', sourceColumn: 'description' },
+  family: { column: 'family_id', baseColumn: 'base_family_id', sourceColumn: 'family_id' },
+};
+
+/**
+ * Applies a partial edit.
+ *
+ * Only the keys present in the body are touched; everything else on the
+ * override survives untouched. When the last value is cleared the row is
+ * deleted outright, so the pipeline takes over again.
+ */
+async function patchOverride(
+  supabase: Supabase,
+  options: {
+    table: string;
+    baseTable: string;
+    keyColumn: string;
+    keyValue: string;
+    fields: Record<string, FieldSpec>;
+    baseSelect: string;
+    patch: Record<string, unknown>;
+    editor: string;
+  },
+) {
+  const { table, baseTable, keyColumn, keyValue, fields, baseSelect, patch, editor } = options;
+
+  const [base] = await supabase.select<Record<string, unknown>>(
+    baseTable,
+    `select=${baseSelect}&${keyColumn}=${eq(keyValue)}`,
   );
   if (!base) {
-    return c.json({ error: 'modelo no encontrado' }, 404);
+    return null;
+  }
+  const [existing] = await supabase.select<Record<string, unknown>>(
+    table,
+    `select=*&${keyColumn}=${eq(keyValue)}`,
+  );
+
+  // Family arrives as a name and is stored as an id.
+  const resolved: Record<string, unknown> = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, 'family')) {
+    resolved['family'] = await familyIdOf(supabase, patch['family']);
   }
 
-  const [stored] = await supabase.upsert<Record<string, unknown>>(
-    'model_override',
-    [
-      {
-        model_id: id,
-        name: body.name ?? null,
-        family_id: await familyIdOf(supabase, body.family),
-        base_name: base.name,
-        base_family_id: base.family_id,
-        edited_by: editorOf(c.req.raw),
-        edited_at: new Date().toISOString(),
-      },
-    ],
-    'model_id',
+  const row = mergeOverride(
+    { [keyColumn]: keyValue },
+    fields,
+    resolved,
+    existing,
+    base,
+    editor,
+    new Date().toISOString(),
   );
-  return c.json(stored);
+
+  if (isEmptyOverride(row, fields)) {
+    await supabase.delete(table, `${keyColumn}=${eq(keyValue)}`);
+    return { cleared: true };
+  }
+  const [stored] = await supabase.upsert<Record<string, unknown>>(table, [row], keyColumn);
+  return stored;
+}
+
+routes.patch('/models/:id', async (c) => {
+  const result = await patchOverride(db(c.env), {
+    table: 'model_override',
+    baseTable: 'model',
+    keyColumn: 'model_id',
+    keyValue: c.req.param('id'),
+    fields: MODEL_FIELDS,
+    baseSelect: 'name,family_id',
+    patch: await c.req.json<Record<string, unknown>>(),
+    editor: editorOf(c.req.raw),
+  });
+  return result ? c.json(result) : c.json({ error: 'modelo no encontrado' }, 404);
 });
 
 routes.patch('/parts/:code', async (c) => {
-  const supabase = db(c.env);
-  const code = c.req.param('code');
-  const body = await c.req.json<{ description?: string; family?: string }>();
-
-  const [base] = await supabase.select<{ description: string; family_id: number | null }>(
-    'part',
-    `select=description,family_id&code=${eq(code)}`,
-  );
-  if (!base) {
-    return c.json({ error: 'repuesto no encontrado' }, 404);
-  }
-
-  const [stored] = await supabase.upsert<Record<string, unknown>>(
-    'part_override',
-    [
-      {
-        code,
-        description: body.description ?? null,
-        family_id: await familyIdOf(supabase, body.family),
-        base_description: base.description,
-        base_family_id: base.family_id,
-        edited_by: editorOf(c.req.raw),
-        edited_at: new Date().toISOString(),
-      },
-    ],
-    'code',
-  );
-  return c.json(stored);
+  const result = await patchOverride(db(c.env), {
+    table: 'part_override',
+    baseTable: 'part',
+    keyColumn: 'code',
+    keyValue: c.req.param('code'),
+    fields: PART_FIELDS,
+    baseSelect: 'description,family_id',
+    patch: await c.req.json<Record<string, unknown>>(),
+    editor: editorOf(c.req.raw),
+  });
+  return result ? c.json(result) : c.json({ error: 'repuesto no encontrado' }, 404);
 });
 
-/** Removes a manual edit, so the pipeline's value takes over again. */
+/** Removes every manual edit on the row, so the pipeline's values take over. */
 routes.delete('/models/:id/override', async (c) => {
   await db(c.env).delete('model_override', `model_id=${eq(c.req.param('id'))}`);
   return c.body(null, 204);
@@ -167,7 +216,6 @@ routes.delete('/parts/:code/override', async (c) => {
   return c.body(null, 204);
 });
 
-/** The review queue: where a human edit and the pipeline disagree. */
 routes.get('/drift', async (c) =>
   c.json(await db(c.env).select('v_drift', 'select=*&order=edited_at.desc')),
 );
@@ -178,7 +226,6 @@ const IMAGE_TYPES: Record<string, string> = {
   'image/png': 'png',
 };
 
-/** Uploads one image to R2 and records it against a model or a part. */
 routes.post('/images', async (c) => {
   const form = await c.req.formData();
   const file = form.get('file');
@@ -215,6 +262,7 @@ routes.post('/images', async (c) => {
         entity_id: entityId,
         bucket: 'groupe-seb-images',
         storage_key: key,
+        // Empty means decorative, which is a deliberate choice the UI forces.
         alt_text: altText,
         sha256,
         uploaded_by: editorOf(c.req.raw),
@@ -227,10 +275,26 @@ routes.post('/images', async (c) => {
 
 routes.get('/images', async (c) => {
   const { entityType = '', entityId = '' } = c.req.query();
-  const filters = ['select=*'];
+  const filters = ['select=*', 'order=sort_order,id'];
   if (entityType) filters.push(`entity_type=${eq(entityType)}`);
   if (entityId) filters.push(`entity_id=${eq(entityId)}`);
   return c.json(await db(c.env).select('v_image', filters.join('&')));
+});
+
+/** Soft-deletes the record and drops the object, so the bucket does not grow forever. */
+routes.delete('/images/:id', async (c) => {
+  const supabase = db(c.env);
+  const id = c.req.param('id');
+  const [row] = await supabase.select<{ storage_key: string }>(
+    'image',
+    `select=storage_key&id=${eq(id)}`,
+  );
+  if (!row) {
+    return c.json({ error: 'no encontrada' }, 404);
+  }
+  await supabase.patch('image', `id=${eq(id)}`, { deleted_at: new Date().toISOString() });
+  await c.env.IMAGES.delete(row.storage_key);
+  return c.body(null, 204);
 });
 
 /** Serves an image out of R2 so the bucket needs no public URL of its own. */

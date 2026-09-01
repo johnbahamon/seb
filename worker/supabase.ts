@@ -61,9 +61,21 @@ export class Supabase {
     return response.json();
   }
 
+  /** Updates the rows matched by `query`. */
+  async patch(table: string, query: string, values: Record<string, unknown>): Promise<void> {
+    const response = await fetch(`${this.config.url}/rest/v1/${table}?${query}`, {
+      method: 'PATCH',
+      headers: this.headers({ 'content-type': 'application/json', prefer: 'return=minimal' }),
+      body: JSON.stringify(values),
+    });
+    if (!response.ok) {
+      throw new SupabaseError(response.status, await response.text());
+    }
+  }
+
   /** Exact row count, via the Content-Range header rather than fetching rows. */
-  async count(relation: string): Promise<number | null> {
-    const response = await fetch(`${this.config.url}/rest/v1/${relation}?select=*&limit=0`, {
+  async count(relation: string, query = 'select=*'): Promise<number | null> {
+    const response = await fetch(`${this.config.url}/rest/v1/${relation}?${query}&limit=0`, {
       headers: this.headers({ prefer: 'count=exact' }),
     });
     if (!response.ok) {
