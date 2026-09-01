@@ -42,3 +42,17 @@ __screenshots__/
 # System files
 .DS_Store
 Thumbs.db
+
+# Documentos fuente de los catalogos (35 MB, se distribuyen aparte)
+/sources
+
+# Herramientas de extraccion: hablan con la API privada de AgoraPlus y llevan
+# identificadores de cuenta. No son input del build (ng build nunca las lee).
+/tools
+
+# Artefactos del pipeline de extraccion
+__pycache__/
+*.py[cod]
+*.bak
+*.bak[0-9]
+/public/data/quality-report*.json

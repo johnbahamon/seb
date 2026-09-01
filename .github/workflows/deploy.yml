@@ -1,0 +1,104 @@
+# Builds the Angular catalog SPA and publishes it to GitHub Pages at
+# https://johnbahamon.github.io/seb/
+#
+# One-time manual step: Settings -> Pages -> Source must be "GitHub Actions".
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel a deploy already publishing: a half-applied Pages deploy is worse
+# than a slightly stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Gate: a red suite must never reach the deploy job.
+      - name: Unit tests
+        run: npx ng test --watch=false
+
+      # --base-href /seb/ is a blocker, not a nicety: the app resolves
+      # data/catalog.json and images/**.webp document-relatively, so without the
+      # trailing-and-leading slashes every asset 404s on a nested route.
+      - name: Build
+        run: npx ng build --configuration production --base-href /seb/
+
+      - name: Verify base href was applied
+        run: |
+          set -euo pipefail
+          grep -qE '<base[^>]+href="/seb/"' dist/groupeseb/browser/index.html \
+            || { echo '::error::index.html lacks <base href="/seb/">'; exit 1; }
+
+      # Pages serves 404.html for any unmatched path; the SPA boots from it and
+      # the router renders the real route. Copied AFTER the build because
+      # outputHashing: "all" changes the bundle names every time.
+      - name: SPA fallback (404.html)
+        run: cp dist/groupeseb/browser/index.html dist/groupeseb/browser/404.html
+
+      - name: .nojekyll
+        run: touch dist/groupeseb/browser/.nojekyll
+
+      # public/ is copied wholesale into the payload, so a stray local backup or
+      # pipeline report would be served to the open web. angular.json already
+      # ignores them; this fails the run if that ever regresses.
+      - name: Guard - payload contains only what we intend
+        run: |
+          set -euo pipefail
+          leaked="$(find dist/groupeseb/browser \( -name '*.bak*' -o -name 'quality-report*.json' \) -print)"
+          if [ -n "$leaked" ]; then
+            echo "::error::Non-web files reached the Pages payload:"; echo "$leaked"; exit 1
+          fi
+          for required in data/catalog.json 404.html robots.txt; do
+            test -f "dist/groupeseb/browser/$required" \
+              || { echo "::error::missing $required in payload"; exit 1; }
+          done
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+        continue-on-error: true
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/groupeseb/browser
+          include-hidden-files: true
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5
