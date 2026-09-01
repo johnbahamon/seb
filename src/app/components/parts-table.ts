@@ -100,9 +100,7 @@ const COP = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 0 });
               <td class="px-2 py-1.5 font-mono text-slate-600">{{ row.part.cmmf ?? '—' }}</td>
               <td class="px-2 py-1.5 text-right font-mono tabular-nums text-slate-800">
                 @if (row.part.priceRegular !== null) {
-                  <span [title]="row.part.priceGross !== null ? 'Bruto: ' + gross(row.part.priceGross) : ''">
-                    \${{ price(row.part.priceRegular) }}
-                  </span>
+                  <span>\${{ price(row.part.priceRegular) }}</span>
                 } @else {
                   <span class="text-slate-400">—</span>
                 }
@@ -137,10 +135,6 @@ export class PartsTable {
   ];
 
   protected price(value: number): string {
-    return COP.format(value);
-  }
-
-  protected gross(value: number): string {
     return COP.format(value);
   }
 

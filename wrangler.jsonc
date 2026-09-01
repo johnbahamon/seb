@@ -14,13 +14,18 @@
     "run_worker_first": ["/api/*"]
   },
 
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "groupe-seb-catalog",
-      "database_id": "a8994de2-4d1c-494f-b30b-f2bcbf549627"
-    }
+
+  // Imagenes subidas desde /admin. R2 no cobra egress, que es lo que evita
+  // un techo de ancho de banda al servir fotos de producto.
+  "r2_buckets": [
+    { "binding": "IMAGES", "bucket_name": "groupe-seb-images" }
   ],
+
+  // La URL no es secreta. La service_role key va como secret:
+  //   npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+  "vars": {
+    "SUPABASE_URL": "https://brqavwhvfpvcyuxmshsm.supabase.co"
+  },
 
   "observability": { "enabled": true }
 }
