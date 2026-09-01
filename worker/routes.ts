@@ -9,9 +9,37 @@ import { Supabase } from './supabase';
 import { isEmptyOverride, mergeOverride, type FieldSpec } from './overrides';
 import type { Env } from './env';
 
-/** Access puts the authenticated identity in this header once it fronts the app. */
+/**
+ * Who is making the change, for the audit trail.
+ *
+ * Access does not forward the identity as a plain header — it forwards a signed
+ * JWT in `cf-access-jwt-assertion`, and the identity lives inside it: `email`
+ * for a person, `common_name` for a service token. Verified empirically; the
+ * email header this used to read is never sent here.
+ *
+ * The signature is not re-verified: Access already validated it, and a request
+ * cannot reach this Worker without passing through Access. This decode is for
+ * attribution, not authorisation.
+ */
 function editorOf(request: Request): string {
-  return request.headers.get('cf-access-authenticated-user-email') ?? 'anonimo';
+  const assertion = request.headers.get('cf-access-jwt-assertion');
+  if (!assertion) {
+    return 'anonimo';
+  }
+  try {
+    const payload = assertion.split('.')[1];
+    if (!payload) {
+      return 'anonimo';
+    }
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const claims = JSON.parse(json) as { email?: string; common_name?: string };
+    if (claims.email) {
+      return claims.email;
+    }
+    return claims.common_name ? `service-token:${claims.common_name}` : 'anonimo';
+  } catch {
+    return 'anonimo';
+  }
 }
 
 function db(env: Env): Supabase {
@@ -131,6 +159,9 @@ async function patchOverride(
   options: {
     table: string;
     baseTable: string;
+    /** Primary key on the BASE table: `id` for model, `code` for part. */
+    baseKeyColumn: string;
+    /** Primary key on the OVERRIDE table: `model_id` for models, `code` for parts. */
     keyColumn: string;
     keyValue: string;
     fields: Record<string, FieldSpec>;
@@ -139,11 +170,12 @@ async function patchOverride(
     editor: string;
   },
 ) {
-  const { table, baseTable, keyColumn, keyValue, fields, baseSelect, patch, editor } = options;
+  const { table, baseTable, baseKeyColumn, keyColumn, keyValue, fields, baseSelect, patch, editor } =
+    options;
 
   const [base] = await supabase.select<Record<string, unknown>>(
     baseTable,
-    `select=${baseSelect}&${keyColumn}=${eq(keyValue)}`,
+    `select=${baseSelect}&${baseKeyColumn}=${eq(keyValue)}`,
   );
   if (!base) {
     return null;
@@ -181,6 +213,7 @@ routes.patch('/models/:id', async (c) => {
   const result = await patchOverride(db(c.env), {
     table: 'model_override',
     baseTable: 'model',
+    baseKeyColumn: 'id',
     keyColumn: 'model_id',
     keyValue: c.req.param('id'),
     fields: MODEL_FIELDS,
@@ -195,6 +228,7 @@ routes.patch('/parts/:code', async (c) => {
   const result = await patchOverride(db(c.env), {
     table: 'part_override',
     baseTable: 'part',
+    baseKeyColumn: 'code',
     keyColumn: 'code',
     keyValue: c.req.param('code'),
     fields: PART_FIELDS,
@@ -313,3 +347,15 @@ routes.get('/images/file/*', async (c) => {
 });
 
 routes.notFound((c) => c.json({ error: 'not_found' }, 404));
+
+/**
+ * Surfaces the real cause instead of an opaque 500.
+ *
+ * Safe here because Cloudflare Access gates every route in this file, so the
+ * only readers are authenticated admins — and an admin tool that hides why a
+ * save failed is worse than useless.
+ */
+routes.onError((error, c) => {
+  console.error('api error', c.req.method, c.req.path, error);
+  return c.json({ error: error.message.slice(0, 400) }, 500);
+});
