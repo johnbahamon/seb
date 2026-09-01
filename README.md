@@ -57,3 +57,23 @@ Angular CLI does not come with an end-to-end testing framework by default. You c
 ## Additional Resources
 
 For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+
+## Publicar cambios del catálogo
+
+Las ediciones hechas en `/admin` viven en Supabase; el sitio público sirve un
+JSON estático. Este comando cierra el circuito:
+
+```
+npm run publish:site
+```
+
+Exporta la base a `public/data/catalog.json`, baja de R2 las fotos subidas,
+compila y despliega. En PowerShell no encadenes con `&&` a mano: no es un
+separador válido en Windows PowerShell 5.1.
+
+| Comando | Qué hace |
+|---|---|
+| `npm run publish:site` | export + build + deploy (lo habitual) |
+| `npm run export` | sólo regenera `catalog.json` desde Supabase |
+| `npm run deploy:site` | sólo compila y despliega |
+| `npm run load` | carga `catalog.json` a Supabase (tras correr el pipeline) |
