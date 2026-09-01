@@ -34,7 +34,7 @@ export interface Diagram {
   readonly image: string;
   readonly width: number;
   readonly height: number;
-  /** 1 or 2: some models print their despiece across two plates. */
+  /** Plate number, 1-4: a despiece can be printed across several plates. */
   readonly part: number;
 }
 
