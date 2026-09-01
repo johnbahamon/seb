@@ -12,7 +12,13 @@
 --    ni reordenar: sólo acumular.
 -- ---------------------------------------------------------------------------
 
-create or replace view v_image
+-- DROP y no CREATE OR REPLACE: Postgres sólo deja AÑADIR columnas al final de
+-- una vista existente, nunca reordenarlas ni renombrarlas, y aquí `id` entra
+-- primero (error 42P16). Nada depende de estas vistas, así que soltarlas es
+-- seguro; los grants se rehacen al final del archivo.
+drop view if exists v_image;
+
+create view v_image
 with (security_invoker = true) as
 select id, entity_type, entity_id, bucket, storage_key,
        width, height, alt_text, sort_order, uploaded_at
@@ -20,7 +26,9 @@ from image
 where deleted_at is null
 order by entity_type, entity_id, sort_order, id;
 
-create or replace view v_drift
+drop view if exists v_drift;
+
+create view v_drift
 with (security_invoker = true) as
 -- Modelo: el pipeline movió un nombre editado a mano.
 select 'model' as entity, m.id as entity_id, 'name' as field,
