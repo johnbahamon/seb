@@ -22,6 +22,7 @@ function part(code: string, description: string, cmmf: string | null, price: num
     photo: null,
     photoWidth: null,
     photoHeight: null,
+    photoAlt: null,
     priceRegular: price,
     priceGross: null,
     currency: price === null ? null : 'COP',

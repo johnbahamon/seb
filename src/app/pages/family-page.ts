@@ -28,6 +28,17 @@ import type { Brand } from '../models/catalog.models';
             class="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-4 hover:border-blue-600 hover:shadow-sm"
             [routerLink]="['/modelo', model.id]"
           >
+            @if (model.photo; as photo) {
+              <img
+                [src]="photo"
+                [alt]="model.photoAlt ?? ''"
+                width="96"
+                height="96"
+                loading="lazy"
+                decoding="async"
+                class="mb-2 h-24 w-full object-contain"
+              />
+            }
             <span class="flex items-center gap-2">
               <span
                 class="inline-block h-3 w-3 shrink-0 rounded-sm"

@@ -122,6 +122,7 @@ export class CatalogStore {
         photo: null,
         photoWidth: null,
         photoHeight: null,
+        photoAlt: null,
         priceRegular: null,
         priceGross: null,
         currency: null,

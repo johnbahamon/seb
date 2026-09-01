@@ -69,6 +69,9 @@ export interface Model {
   readonly parts: readonly ModelPart[];
   /** References whose parts list is identical to this model's. */
   readonly equivalentRefs: readonly string[];
+  /** Photo uploaded from /admin. The extraction pipeline produces none. */
+  readonly photo: string | null;
+  readonly photoAlt: string | null;
 }
 
 export interface Part {
@@ -87,6 +90,8 @@ export interface Part {
   readonly photo: string | null;
   readonly photoWidth: number | null;
   readonly photoHeight: number | null;
+  /** Set when the photo was uploaded from /admin; required there for WCAG AA. */
+  readonly photoAlt: string | null;
   /** Regular (net) price from the 2026 price list, in COP. Null when the part isn't priced. */
   readonly priceRegular: number | null;
   /** Gross list price before commercial discount, in COP. */

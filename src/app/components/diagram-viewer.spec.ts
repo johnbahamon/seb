@@ -27,6 +27,7 @@ function part(code: string, description: string): Part {
     photo: null,
     photoWidth: null,
     photoHeight: null,
+    photoAlt: null,
     priceRegular: null,
     priceGross: null,
     currency: null,

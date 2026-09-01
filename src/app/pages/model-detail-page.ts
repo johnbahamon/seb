@@ -20,6 +20,15 @@ import { PartsTable } from '../components/parts-table';
       </nav>
 
       <div class="mt-2 flex flex-wrap items-start gap-x-4 gap-y-2">
+        @if (model.photo; as photo) {
+          <img
+            [src]="photo"
+            [alt]="model.photoAlt ?? ''"
+            width="128"
+            height="128"
+            class="h-32 w-32 shrink-0 rounded-lg border border-slate-200 bg-white object-contain p-1"
+          />
+        }
         <div>
           <h1 class="text-2xl font-bold tracking-tight text-slate-900">{{ model.name }}</h1>
           <p class="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-600">
