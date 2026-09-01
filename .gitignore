@@ -56,3 +56,6 @@ __pycache__/
 *.bak
 *.bak[0-9]
 /public/data/quality-report*.json
+
+# Wrangler local state (dev sqlite, build cache)
+/.wrangler
