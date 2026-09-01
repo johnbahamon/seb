@@ -1,3 +1,46 @@
-/* You can add global styles to this file, and also import other style files */
-
 @import 'tailwindcss';
+
+@theme {
+  /* Brand accents, taken from the catalog artwork. They are used as graphic
+     marks only: IMUSA orange is 3.27:1 on white and fails AA as text. */
+  --color-samurai: #d22e1c;
+  --color-imusa: #ff5100;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* A visible, high-contrast focus ring everywhere, including inside the plate viewer. */
+:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
