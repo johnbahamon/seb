@@ -7,6 +7,7 @@ import { Hono } from 'hono';
 
 import { Supabase } from './supabase';
 import { isEmptyOverride, mergeOverride, type FieldSpec } from './overrides';
+import { refreshSnapshot } from './snapshot';
 import type { Env } from './env';
 
 /**
@@ -61,6 +62,36 @@ function likeLiteral(term: string): string {
 }
 
 export const routes = new Hono<{ Bindings: Env }>().basePath('/api');
+
+const MUTATIONS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+
+/**
+ * Republishes the catalog after every successful write.
+ *
+ * This is what makes an edit visible on the next refresh with no publish step.
+ * It is awaited rather than deferred: if the republish fails the caller has to
+ * know, because the row was saved but the public site still shows the old
+ * value — and silently reporting success there is exactly the confusion this
+ * whole design is meant to avoid.
+ */
+routes.use('*', async (c, next) => {
+  await next();
+  if (!MUTATIONS.has(c.req.method) || c.res.status >= 300) {
+    return;
+  }
+  try {
+    await refreshSnapshot(c.env);
+  } catch (error) {
+    console.error('snapshot refresh failed', error);
+    c.res = Response.json(
+      {
+        error: 'guardado, pero no se pudo publicar en el sitio',
+        detail: String(error).slice(0, 300),
+      },
+      { status: 502 },
+    );
+  }
+});
 
 routes.get('/health', async (c) => {
   const supabase = db(c.env);

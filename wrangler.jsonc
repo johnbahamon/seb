@@ -11,7 +11,10 @@
     "directory": "./dist/groupeseb/browser",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    // /api/* -> admin (lo cierra Access). /data/catalog.json y /img/* -> publicas,
+    // las sirve el Worker desde R2 para que una edicion se vea al refrescar.
+    // Todo lo demas sigue saliendo como asset estatico, gratis e ilimitado.
+    "run_worker_first": ["/api/*", "/data/catalog.json", "/img/*"]
   },
 
 
